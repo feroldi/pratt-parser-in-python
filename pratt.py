@@ -86,15 +86,23 @@ def punctuator(tok_kind):
         TokenKind.BANG: "!",
         TokenKind.QUESTION: "?",
         TokenKind.COLON: ":",
-        TokenKind.NAME: "[a-z]+",
     }
     return tok_to_str.get(tok_kind)
 
 
 class Parser:
-    def __init__(self, tokens):
+    def __init__(self, tokens, prefix_parsers):
         self.tokens = tokens
         self.tok_buffer = []
+        self.prefix_parsers = prefix_parsers
+
+    def parse_expr(self):
+        tok = self.consume()
+        prefix_parser = self.prefix_parsers.get(tok.kind)
+        if prefix_parser:
+            return prefix_parser.parse(self, tok)
+        else:
+            raise RuntimeError(f"could not parse {tok.kind}")
 
     def match(self, expected):
         tok = self.look_ahead()
@@ -116,3 +124,53 @@ class Parser:
             tok = self.tokens.next_tok()
             self.tok_buffer.append(tok)
         return self.tok_buffer[distance]
+
+
+class Expr:
+    def dump(self) -> str:
+        pass
+
+
+@dataclass
+class NameExpr(Expr):
+    value: str
+
+    def dump(self):
+        return self.value
+
+@dataclass
+class PrefixOpExpr(Expr):
+    op: TokenKind
+    rhs: Expr
+
+    def dump(self):
+        return "(" + punctuator(self.op) + self.rhs.dump() + ")"
+
+
+class PrefixParser:
+    def parse(self, parser: Parser, token: Token) -> Expr:
+        pass
+
+class NameParser(PrefixParser):
+    def parse(self, parser, token):
+        return NameExpr(value=token.lexeme)
+
+
+class PrefixOpParser(PrefixParser):
+    def parse(self, parser, token):
+        operand = parser.parse_expr()
+        return PrefixOpExpr(op=token.kind, rhs=operand)
+
+
+if __name__ == "__main__":
+    lexer = Lexer(input())
+    prefix_parsers = {
+        TokenKind.NAME: NameParser(),
+        TokenKind.PLUS: PrefixOpParser(),
+        TokenKind.MINUS: PrefixOpParser(),
+        TokenKind.TILDE: PrefixOpParser(),
+        TokenKind.BANG: PrefixOpParser(),
+    }
+    parser = Parser(lexer, prefix_parsers)
+    print(parser.parse_expr().dump())
+
