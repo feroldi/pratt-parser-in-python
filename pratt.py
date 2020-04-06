@@ -11,7 +11,7 @@ class TokenKind(IntEnum):
     ASSIGN = auto()
     PLUS = auto()
     MINUS = auto()
-    ASTERISK = auto()
+    STAR = auto()
     SLASH = auto()
     CARET = auto()
     TILDE = auto()
@@ -30,7 +30,7 @@ def punctuator(tok_kind):
         TokenKind.ASSIGN: "=",
         TokenKind.PLUS: "+",
         TokenKind.MINUS: "-",
-        TokenKind.ASTERISK: "*",
+        TokenKind.STAR: "*",
         TokenKind.SLASH: "/",
         TokenKind.CARET: "^",
         TokenKind.TILDE: "~",
@@ -54,7 +54,7 @@ TOK_PATTERNS = [
     (TokenKind.ASSIGN, r"="),
     (TokenKind.PLUS, r"\+"),
     (TokenKind.MINUS, r"-"),
-    (TokenKind.ASTERISK, r"\*"),
+    (TokenKind.STAR, r"\*"),
     (TokenKind.SLASH, r"/"),
     (TokenKind.CARET, r"\^"),
     (TokenKind.TILDE, r"~"),
@@ -90,6 +90,17 @@ class Lexer:
         return tokens
 
 
+class Precedence(IntEnum):
+    ASSIGNMENT = auto()
+    CONDITIONAL = auto()
+    SUM = auto()
+    PRODUCT = auto()
+    EXPONENT = auto()
+    PREFIX = auto()
+    POSTFIX = auto()
+    CALL = auto()
+
+
 class Parser:
     def __init__(self, tokens, prefix_parsers, infix_parsers):
         self.tokens = tokens
@@ -97,19 +108,22 @@ class Parser:
         self.prefix_parsers = prefix_parsers
         self.infix_parsers = infix_parsers
 
-    def parse_expr(self):
+    def parse_expr(self, precedence=0):
         tok = self.consume()
         prefix_parser = self.prefix_parsers.get(tok.kind)
         if prefix_parser:
             lhs = prefix_parser.parse(self, tok)
-            infix_parser = self.infix_parsers.get(self.look_ahead().kind)
-            if infix_parser:
+            while precedence < self.precedence_for_current_infix():
                 tok = self.consume()
-                return infix_parser.parse(self, lhs, tok)
-            else:
-                return lhs
+                infix_parser = self.infix_parsers.get(tok.kind)
+                lhs = infix_parser.parse(self, lhs, tok)
+            return lhs
         else:
-            raise RuntimeError(f"could not parse {tok.kind}")
+            raise RuntimeError(f"could not parse '{tok.kind.name}'")
+
+    def precedence_for_current_infix(self):
+        infix_parser = self.infix_parsers.get(self.look_ahead().kind)
+        return infix_parser.get_precedence() if infix_parser else 0
 
     def match(self, expected):
         tok = self.look_ahead()
@@ -122,7 +136,7 @@ class Parser:
         tok = self.look_ahead()
         if expected and tok.kind != expected:
             raise RuntimeError(
-                f"expected token {expected.name}, but found {tok.kind.name}"
+                f"expected token '{expected.name}', but found '{tok.kind.name}'"
             )
         return self.tok_buffer.pop(0)
 
@@ -147,14 +161,6 @@ class NameExpr(Expr):
 
     def dump(self):
         return self.value
-
-
-@dataclass
-class GroupExpr(Expr):
-    inner: Expr
-
-    def dump(self):
-        return "(" + self.inner.dump() + ")"
 
 
 @dataclass
@@ -217,17 +223,20 @@ class NameParser(PrefixParser):
 
 
 class PrefixOpParser(PrefixParser):
+    def __init__(self, precedence):
+        self.precedence = precedence
+
     def parse(self, parser, token):
-        operand = parser.parse_expr()
+        operand = parser.parse_expr(self.precedence)
         return PrefixOpExpr(op=token.kind, rhs=operand)
 
 
 class GroupParser(PrefixParser):
     def parse(self, parser, token):
         assert token.kind == TokenKind.LEFT_PAREN
-        inner = parser.parse_expr()
+        inner_expr = parser.parse_expr()
         parser.consume(expected=TokenKind.RIGHT_PAREN)
-        return GroupExpr(inner=inner)
+        return inner_expr
 
 
 # Infix, postfix and mixfix operator parsers
@@ -238,16 +247,34 @@ class InfixParser:
     def parse(self, parser: Parser, lhs: Expr, token: Token) -> Expr:
         pass
 
+    def get_precedence(self) -> Precedence:
+        pass
+
 
 class InfixOpParser(InfixParser):
+    def __init__(self, precedence, is_right_associative):
+        self.precedence = precedence
+        self.is_right_associative = is_right_associative
+
     def parse(self, parser, lhs, token):
-        rhs = parser.parse_expr()
+        rhs = parser.parse_expr(
+            self.precedence - (1 if self.is_right_associative else 0)
+        )
         return InfixOpExpr(op=token.kind, lhs=lhs, rhs=rhs)
+
+    def get_precedence(self):
+        return self.precedence
 
 
 class PostfixOpParser(InfixParser):
+    def __init__(self, precedence):
+        self.precedence = precedence
+
     def parse(self, parser, lhs, token):
         return PostfixOpExpr(op=token.kind, lhs=lhs)
+
+    def get_precedence(self):
+        return self.precedence
 
 
 class ConditionalParser(InfixParser):
@@ -255,8 +282,11 @@ class ConditionalParser(InfixParser):
         assert token.kind == TokenKind.QUESTION
         then_arm = parser.parse_expr()
         parser.consume(expected=TokenKind.COLON)
-        else_arm = parser.parse_expr()
+        else_arm = parser.parse_expr(self.get_precedence() - 1)
         return ConditionalExpr(condition=lhs, then_arm=then_arm, else_arm=else_arm)
+
+    def get_precedence(self):
+        return Precedence.CONDITIONAL
 
 
 # Main
@@ -265,19 +295,19 @@ if __name__ == "__main__":
     lexer = Lexer(input())
     prefix_parsers = {
         TokenKind.NAME: NameParser(),
-        TokenKind.PLUS: PrefixOpParser(),
-        TokenKind.MINUS: PrefixOpParser(),
-        TokenKind.TILDE: PrefixOpParser(),
-        TokenKind.BANG: PrefixOpParser(),
+        TokenKind.PLUS: PrefixOpParser(Precedence.PREFIX),
+        TokenKind.MINUS: PrefixOpParser(Precedence.PREFIX),
+        TokenKind.TILDE: PrefixOpParser(Precedence.PREFIX),
+        TokenKind.BANG: PrefixOpParser(Precedence.PREFIX),
         TokenKind.LEFT_PAREN: GroupParser(),
     }
     infix_parsers = {
-        TokenKind.PLUS: InfixOpParser(),
-        TokenKind.MINUS: InfixOpParser(),
-        TokenKind.ASTERISK: InfixOpParser(),
-        TokenKind.SLASH: InfixOpParser(),
-        TokenKind.CARET: InfixOpParser(),
-        TokenKind.BANG: PostfixOpParser(),
+        TokenKind.PLUS: InfixOpParser(Precedence.SUM, is_right_associative=False),
+        TokenKind.MINUS: InfixOpParser(Precedence.SUM, is_right_associative=False),
+        TokenKind.STAR: InfixOpParser(Precedence.PRODUCT, is_right_associative=False),
+        TokenKind.SLASH: InfixOpParser(Precedence.PRODUCT, is_right_associative=False),
+        TokenKind.CARET: InfixOpParser(Precedence.EXPONENT, is_right_associative=True),
+        TokenKind.BANG: PostfixOpParser(Precedence.POSTFIX),
         TokenKind.QUESTION: ConditionalParser(),
     }
     parser = Parser(lexer, prefix_parsers, infix_parsers)
