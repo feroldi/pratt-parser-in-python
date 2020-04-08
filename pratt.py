@@ -1,7 +1,8 @@
 import re
 
-from enum import IntEnum, auto
 from dataclasses import dataclass
+from enum import IntEnum, auto
+from typing import List
 
 
 class TokenKind(IntEnum):
@@ -209,6 +210,15 @@ class ConditionalExpr(Expr):
         )
 
 
+@dataclass
+class CallExpr(Expr):
+    name: str
+    args: List[Expr]
+
+    def dump(self):
+        return self.name + "(" + ",".join(map(lambda e: e.dump(), self.args)) + ")"
+
+
 # Prefix operator parsers
 
 
@@ -289,6 +299,25 @@ class ConditionalParser(InfixParser):
         return Precedence.CONDITIONAL
 
 
+class CallParser(InfixParser):
+    def parse(self, parser, lhs, token):
+        assert token.kind == TokenKind.LEFT_PAREN
+        if not isinstance(lhs, NameExpr):
+            raise RuntimeError(
+                f"call-expression expects a name before '{TokenKind.LEFT_PAREN.name}'"
+            )
+        args = []
+        if not parser.match(TokenKind.RIGHT_PAREN):
+            args.append(parser.parse_expr())
+            while parser.match(TokenKind.COMMA):
+                args.append(parser.parse_expr())
+            parser.consume(expected=TokenKind.RIGHT_PAREN)
+        return CallExpr(name=lhs.value, args=args)
+
+    def get_precedence(self):
+        return Precedence.CALL
+
+
 class Lang:
     prefix_parsers = {
         TokenKind.NAME: NameParser(),
@@ -306,6 +335,7 @@ class Lang:
         TokenKind.CARET: InfixOpParser(Precedence.EXPONENT, is_right_associative=True),
         TokenKind.BANG: PostfixOpParser(Precedence.POSTFIX),
         TokenKind.QUESTION: ConditionalParser(),
+        TokenKind.LEFT_PAREN: CallParser(),
     }
 
     def __init__(self, chars):
@@ -379,3 +409,9 @@ if __name__ == "__main__":
     assert parse("a ? b ? c : d : e") == "(a?(b?c:d):e)"
     assert parse("a ? b : c ? d : e") == "(a?b:(c?d:e))"
     assert parse("(a ? b : c) ? d : e") == "((a?b:c)?d:e)"
+
+    assert parse("a()") == "a()"
+    assert parse("a(b)") == "a(b)"
+    assert parse("a(b, c)") == "a(b,c)"
+    assert parse("a(b(), c(d, e + h))") == "a(b(),c(d,(e+h)))"
+    assert parse("a(a) + b(b)") == "(a(a)+b(b))"
