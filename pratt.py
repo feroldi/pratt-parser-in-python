@@ -289,10 +289,7 @@ class ConditionalParser(InfixParser):
         return Precedence.CONDITIONAL
 
 
-# Main
-
-if __name__ == "__main__":
-    lexer = Lexer(input())
+class Lang:
     prefix_parsers = {
         TokenKind.NAME: NameParser(),
         TokenKind.PLUS: PrefixOpParser(Precedence.PREFIX),
@@ -310,5 +307,75 @@ if __name__ == "__main__":
         TokenKind.BANG: PostfixOpParser(Precedence.POSTFIX),
         TokenKind.QUESTION: ConditionalParser(),
     }
-    parser = Parser(lexer, prefix_parsers, infix_parsers)
-    print(parser.parse_expr().dump())
+
+    def __init__(self, chars):
+        self.lexer = Lexer(chars)
+        self.parser = Parser(self.lexer, self.prefix_parsers, self.infix_parsers)
+
+    def parse(self):
+        return self.parser.parse_expr()
+
+
+def parse(chars):
+    return Lang(chars).parse().dump()
+
+
+if __name__ == "__main__":
+    assert parse("a") == "a"
+    assert parse("abc") == "abc"
+
+    assert parse("+a") == "(+a)"
+    assert parse("-a") == "(-a)"
+    assert parse("~a") == "(~a)"
+    assert parse("!a") == "(!a)"
+    assert parse("(a)") == "a"
+
+    assert parse("+-~!a") == "(+(-(~(!a))))"
+    assert parse("(+-~!(a))") == "(+(-(~(!a))))"
+
+    assert parse("a!") == "(a!)"
+    assert parse("a!!!") == "(((a!)!)!)"
+    assert parse("!a!") == "(!(a!))"
+    assert parse("(!a)!") == "((!a)!)"
+
+    assert parse("a + b") == "(a+b)"
+    assert parse("a - b") == "(a-b)"
+    assert parse("a * b") == "(a*b)"
+    assert parse("a / b") == "(a/b)"
+    assert parse("a ^ b") == "(a^b)"
+
+    assert parse("a + b + c") == "((a+b)+c)"
+    assert parse("a - b - c") == "((a-b)-c)"
+    assert parse("a * b * c") == "((a*b)*c)"
+    assert parse("a / b / c") == "((a/b)/c)"
+    assert parse("a ^ b ^ c") == "(a^(b^c))"
+
+    assert parse("a + (b + c)") == "(a+(b+c))"
+    assert parse("a - (b - c)") == "(a-(b-c))"
+    assert parse("a * (b * c)") == "(a*(b*c))"
+    assert parse("a / (b / c)") == "(a/(b/c))"
+    assert parse("(a ^ b) ^ c") == "((a^b)^c)"
+
+    assert parse("a + b - c") == "((a+b)-c)"
+    assert parse("a - b + c") == "((a-b)+c)"
+    assert parse("a * b / c") == "((a*b)/c)"
+    assert parse("a / b * c") == "((a/b)*c)"
+
+    assert parse("a * b + c") == "((a*b)+c)"
+    assert parse("a + b * c") == "(a+(b*c))"
+    assert parse("a / b + c") == "((a/b)+c)"
+    assert parse("a + b / c") == "(a+(b/c))"
+
+    assert parse("a ^ b + c") == "((a^b)+c)"
+    assert parse("a + b ^ c") == "(a+(b^c))"
+
+    assert parse("a + b ^ c + d") == "((a+(b^c))+d)"
+    assert parse("a + b * c + d") == "((a+(b*c))+d)"
+    assert parse("a + b ^ c * d") == "(a+((b^c)*d))"
+    assert parse("a * b + c * d") == "((a*b)+(c*d))"
+
+    assert parse("a ? b : c") == "(a?b:c)"
+    assert parse("a + b ? -c : c! ^ d") == "((a+b)?(-c):((c!)^d))"
+    assert parse("a ? b ? c : d : e") == "(a?(b?c:d):e)"
+    assert parse("a ? b : c ? d : e") == "(a?b:(c?d:e))"
+    assert parse("(a ? b : c) ? d : e") == "((a?b:c)?d:e)"
